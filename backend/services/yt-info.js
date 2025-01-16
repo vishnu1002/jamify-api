@@ -19,9 +19,8 @@ const cache = new NodeCache({ stdTTL: 3600 });
 // Create a session for reusing TCP connections
 const session = axios.create();
 
-// Retry limit and delay
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 5000; // 5 seconds
+// Timeout for API requests (in milliseconds)
+const REQUEST_TIMEOUT = 5000; // 5 seconds
 
 /**
  * Fetch video data from a specific API URL.
@@ -31,12 +30,17 @@ const RETRY_DELAY = 5000; // 5 seconds
  */
 async function fetchVideoData(apiUrl, videoId) {
   try {
-    const response = await session.get(`${apiUrl}/${videoId}`, { timeout: 10000 });
+    const response = await Promise.race([
+      session.get(`${apiUrl}/${videoId}`, { timeout: REQUEST_TIMEOUT }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out')), REQUEST_TIMEOUT)
+      ),
+    ]);
     if (response.status === 200) {
       return response.data;
     }
   } catch (error) {
-    console.error(`Error fetching video data: ${error.message}`);
+    console.error(`Error fetching video data from ${apiUrl}:`, error.message);
   }
   return null;
 }
@@ -69,14 +73,15 @@ async function tryProxyUrls(audioUrl) {
     try {
       const proxyDomain = proxyUrl.replace('https://', '');
       const proxyAudioUrl = audioUrl.replace(audioUrl.split('/')[2], proxyDomain);
-      if (await checkUrl(proxyAudioUrl)) {
+      const isAccessible = await checkUrl(proxyAudioUrl);
+      if (isAccessible) {
         console.log(`[WORKING-URL]: ${proxyUrl}`);
         return proxyAudioUrl;
       } else {
         console.log(`[403 Forbidden error]: ${proxyUrl}`);
       }
     } catch (error) {
-      console.error(`Error with proxy ${proxyUrl}: ${error.message}`);
+      console.error(`Error with proxy ${proxyUrl}:`, error.message);
     }
   }
   return null;
@@ -89,7 +94,7 @@ async function tryProxyUrls(audioUrl) {
  */
 async function checkUrl(url) {
   try {
-    const response = await session.head(url, { timeout: 5000 });
+    const response = await session.head(url, { timeout: REQUEST_TIMEOUT });
     return response.status === 200 || response.status === 206;
   } catch (error) {
     console.error('[403 Forbidden error]');
@@ -98,7 +103,7 @@ async function checkUrl(url) {
 }
 
 /**
- * Fetch audio URL for a video ID with retries.
+ * Fetch audio URL for a video ID.
  * @param {string} videoId - YouTube video ID.
  * @returns {Promise<string|null>} - Audio URL or null if failed.
  */
@@ -109,53 +114,40 @@ async function fetchAudioUrl(videoId) {
     return cachedResult;
   }
 
-  for (let retry = 0; retry < MAX_RETRIES; retry++) {
-    for (const apiUrl of API_URLS) {
-      try {
-        const videoData = await fetchVideoData(apiUrl, videoId);
-        if (videoData) {
-          const audioUrl = extractAudioUrl(videoData);
-          if (audioUrl && (await checkUrl(audioUrl))) {
-            console.log(`[working]: ${apiUrl}`);
-            cache.set(videoId, audioUrl);
-            return audioUrl;
-          }
-
-          const proxyAudioUrl = await tryProxyUrls(audioUrl);
-          if (proxyAudioUrl) {
-            cache.set(videoId, proxyAudioUrl);
-            return proxyAudioUrl;
-          }
+  // Try all API URLs in parallel
+  const promises = API_URLS.map(async (apiUrl) => {
+    try {
+      const videoData = await fetchVideoData(apiUrl, videoId);
+      if (videoData) {
+        const audioUrl = extractAudioUrl(videoData);
+        if (audioUrl && (await checkUrl(audioUrl))) {
+          console.log(`[working]: ${apiUrl}`);
+          cache.set(videoId, audioUrl);
+          return audioUrl;
         }
-      } catch (error) {
-        console.error(`Error fetching from ${apiUrl}: ${error.message}`);
+
+        const proxyAudioUrl = await tryProxyUrls(audioUrl);
+        if (proxyAudioUrl) {
+          cache.set(videoId, proxyAudioUrl);
+          return proxyAudioUrl;
+        }
       }
+    } catch (error) {
+      console.error(`Error fetching from ${apiUrl}:`, error.message);
     }
-    console.log(`Retry attempt ${retry + 1} of ${MAX_RETRIES}`);
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+    return null;
+  });
+
+  // Wait for the first successful result
+  const results = await Promise.all(promises);
+  const audioUrl = results.find((url) => url !== null);
+
+  if (audioUrl) {
+    return audioUrl;
+  } else {
+    console.log(`No stream URL found for Video ID ${videoId}`);
+    return null;
   }
-  return null;
 }
 
-/**
- * Fetch audio streams for multiple video IDs in parallel.
- * @param {Array<string>} videoIds - Array of YouTube video IDs.
- * @returns {Promise<object>} - Object mapping video IDs to audio URLs.
- */
-async function fetchYouTubeAudioStreams(videoIds) {
-  const audioUrls = {};
-  await Promise.all(
-    videoIds.map(async (videoId) => {
-      const audioUrl = await fetchAudioUrl(videoId);
-      if (audioUrl) {
-        audioUrls[videoId] = audioUrl;
-        console.log(`Stream URL for Video ID ${videoId}: ${audioUrl}`);
-      } else {
-        console.log(`No stream URL found for Video ID ${videoId}`);
-      }
-    })
-  );
-  return audioUrls;
-}
-
-module.exports = { fetchYouTubeAudioStreams };
+module.exports = { fetchAudioUrl };

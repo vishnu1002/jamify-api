@@ -4,7 +4,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 const getSpotifyInfo = require('./services/spot-info');
 const { searchYouTube, searchYouTubeForTracks } = require('./services/yt-search');
-const { fetchYouTubeAudioStreams } = require('./services/yt-info');
+const { fetchAudioUrl } = require('./services/yt-info'); // Import fetchAudioUrl directly
 
 // Load environment variables
 dotenv.config();
@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
 });
 
 /**
- * API endpoint to fetch Spotify metadata and YouTube audio streams.
+ * API endpoint to fetch Spotify metadata and YouTube metadata.
  * @param {string} spotifyURL - Spotify URL (passed as a query parameter).
  */
 app.get('/api/fetch', async (req, res) => {
@@ -44,41 +44,63 @@ app.get('/api/fetch', async (req, res) => {
       // Single track
       const query = `${spotifyData.data.title} ${spotifyData.data.artist}`;
       const youtubeResults = await searchYouTube(query);
-      const audioUrls = await fetchYouTubeAudioStreams([youtubeResults.id]);
 
       res.json({
         type: 'track',
         spotifyData,
         youtubeResults,
-        audioUrls,
       });
     } else if (spotifyData.type === 'playlist') {
       // Playlist
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      });
-
-      for (const track of spotifyData.data.tracks) {
-        const query = `${track.title} ${track.artist}`;
-        const youtubeResults = await searchYouTube(query);
-
-        // Send incremental results
-        res.write(
-          JSON.stringify({
-            type: 'playlist',
-            spotifyData: track,
+      const tracksInfo = await Promise.all(
+        spotifyData.data.tracks.map(async (track) => {
+          const query = `${track.title} ${track.artist}`;
+          const youtubeResults = await searchYouTube(query);
+          return {
+            ...track,
             youtubeResults,
-          }) + '\n'
-        );
-      }
+          };
+        })
+      );
 
-      res.end();
+      res.json({
+        type: 'playlist',
+        data: {
+          title: spotifyData.data.title,
+          description: spotifyData.data.description,
+          image: spotifyData.data.image,
+          link: spotifyData.data.link,
+          tracks: tracksInfo,
+        },
+      });
     }
   } catch (error) {
     console.error('Error in API:', error);
     res.status(500).json({ error: 'An error occurred while processing your request' });
+  }
+});
+
+/**
+ * API endpoint to fetch the stream URL for a specific video ID.
+ * @param {string} videoId - YouTube video ID (passed as a query parameter).
+ */
+app.get('/api/stream', async (req, res) => {
+  const { videoId } = req.query;
+
+  if (!videoId) {
+    return res.status(400).json({ error: 'Video ID is required' });
+  }
+
+  try {
+    const audioUrl = await fetchAudioUrl(videoId);
+    if (audioUrl) {
+      res.json({ audioUrl });
+    } else {
+      res.status(404).json({ error: 'No stream URL found' });
+    }
+  } catch (error) {
+    console.error('Error fetching stream URL:', error);
+    res.status(500).json({ error: 'An error occurred while fetching the stream URL' });
   }
 });
 

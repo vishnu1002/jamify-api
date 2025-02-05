@@ -5,23 +5,44 @@ const NodeCache = require('node-cache');
 const cache = new NodeCache({ stdTTL: 3600 });
 
 /**
+ * Clean and format search query
+ * @param {string} query - The search query
+ * @returns {string} - Formatted query
+ */
+function formatSearchQuery(query) {
+  // Remove special characters and extra spaces
+  return query.replace(/[^\w\s]/gi, ' ').trim();
+}
+
+/**
  * Search YouTube for a single track.
  * @param {string} query - The search query.
- * @param {number} [limit=1] - Maximum number of results to return.
+ * @param {number} [limit=3] - Maximum number of results to search through.
  * @returns {Promise<object|null>} - YouTube metadata or null if not found.
  */
-async function searchYouTube(query, limit = 1) {
+async function searchYouTube(query, limit = 3) {
   try {
+    // Format the query
+    const formattedQuery = formatSearchQuery(query);
+    console.log('Searching YouTube for:', formattedQuery);
+
     // Check if the result is already cached
-    const cacheKey = `search:${query}:${limit}`;
+    const cacheKey = `search:${formattedQuery}:${limit}`;
     const cachedResult = cache.get(cacheKey);
     if (cachedResult) {
+      console.log('Returning cached result for:', formattedQuery);
       return cachedResult;
     }
 
-    const results = await YouTube.search(query, { limit });
+    // Search with more results to find better matches
+    const results = await YouTube.search(formattedQuery, { limit });
+    console.log(`Found ${results.length} results for:`, formattedQuery);
+
     if (results.length > 0) {
+      // Always try the first result first
       const firstResult = results[0];
+      console.log('Selected first result:', firstResult.title);
+
       const youtubeMetadata = {
         id: firstResult.id,
         title: firstResult.title,
@@ -31,10 +52,10 @@ async function searchYouTube(query, limit = 1) {
       // Cache the result
       cache.set(cacheKey, youtubeMetadata);
       return youtubeMetadata;
-    } else {
-      console.log('No results found for query:', query);
-      return null;
     }
+
+    console.log('No results found for query:', formattedQuery);
+    return null;
   } catch (error) {
     console.error('Error searching YouTube:', error);
     return null;

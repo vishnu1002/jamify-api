@@ -11,6 +11,14 @@ dotenv.config();
 // Create Express app
 const app = express();
 const PORT = process.env.PORT || 5000;
+const asciiArt = `
+     ██╗ █████╗ ███╗   ███╗██╗███████╗██╗   ██╗
+     ██║██╔══██╗████╗ ████║██║██╔════╝╚██╗ ██╔╝
+     ██║███████║██╔████╔██║██║█████╗   ╚████╔╝ 
+██   ██║██╔══██║██║╚██╔╝██║██║██╔══╝    ╚██╔╝  
+╚█████╔╝██║  ██║██║ ╚═╝ ██║██║██║        ██║   
+ ╚════╝ ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝        ╚═╝   
+`;
 
 // Middleware
 app.use(cors()); // Enable CORS
@@ -18,12 +26,8 @@ app.use(express.json()); // Parse JSON request bodies
 
 // Welcome route
 app.get('/', (req, res) => {
-  res.json({
-    message: 'Jamify API',
-    usage: {
-      fetch: '/api/fetch/:spotifyUrl',
-    }
-  });
+  res.set('Content-Type', 'text/plain');
+  res.send(asciiArt + '\n/api/fetch/spotify-url');
 });
 
 /**
@@ -34,7 +38,7 @@ app.get('/api/fetch/:spotifyUrl(*)', async (req, res) => {
   const { spotifyUrl } = req.params;
 
   if (!spotifyUrl) {
-    return res.status(400).json({ error: 'Spotify URL is required' });
+    return res.status(400).json({ message: '404' });
   }
 
   // Log the received URL for debugging
@@ -86,6 +90,13 @@ app.get('/api/fetch/:spotifyUrl(*)', async (req, res) => {
     console.error('Error in API:', error);
     res.status(500).json({ error: 'An error occurred while processing your request' });
   }
+});
+
+// Catch-all middleware for undefined routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    message: '404'
+  });
 });
 
 /**
@@ -143,7 +154,7 @@ const startServer = async () => {
   try {
     const port = await findAvailablePort(PORT);
     app.listen(port, () => {
-      console.log(`API server: http://localhost:${port}`);
+      console.log(`Backend: http://localhost:${port}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);

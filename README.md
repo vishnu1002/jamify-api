@@ -1,2 +1,2 @@
 # jamify-api
-backend services
+backend service
